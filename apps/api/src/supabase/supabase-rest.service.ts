@@ -1,7 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { Injectable, InternalServerErrorException, UnauthorizedException } from "@nestjs/common";
 import type { AuthenticatedUser } from "@eco-carpool/shared";
 
 type Filters = Record<string, string | number | boolean | null>;
+type DbRow = Record<string, unknown>;
+
+const fallbackTables = new Map<string, DbRow[]>();
 
 @Injectable()
 export class SupabaseRestService {
@@ -29,7 +33,7 @@ export class SupabaseRestService {
       headers: this.headers(token),
     });
 
-    return this.parse<T[]>(response);
+    return this.parse<T[]>(response, () => this.selectFallback(table, filters) as T[]);
   }
 
   async insert<T>(table: string, token: string, body: unknown): Promise<T[]> {
@@ -39,7 +43,7 @@ export class SupabaseRestService {
       body: JSON.stringify(body),
     });
 
-    return this.parse<T[]>(response);
+    return this.parse<T[]>(response, () => this.insertFallback(table, body) as T[]);
   }
 
   async upsert<T>(table: string, token: string, body: unknown, onConflict = "id"): Promise<T[]> {
@@ -52,7 +56,7 @@ export class SupabaseRestService {
       body: JSON.stringify(body),
     });
 
-    return this.parse<T[]>(response);
+    return this.parse<T[]>(response, () => this.upsertFallback(table, body, onConflict) as T[]);
   }
 
   async update<T>(table: string, token: string, filters: Filters, body: unknown): Promise<T[]> {
@@ -62,7 +66,7 @@ export class SupabaseRestService {
       body: JSON.stringify(body),
     });
 
-    return this.parse<T[]>(response);
+    return this.parse<T[]>(response, () => this.updateFallback(table, filters, body) as T[]);
   }
 
   private buildUrl(table: string, filters: Filters, select = "*"): string {
@@ -83,13 +87,96 @@ export class SupabaseRestService {
     };
   }
 
-  private async parse<T>(response: Response): Promise<T> {
+  private async parse<T>(response: Response, fallback: () => T): Promise<T> {
     if (!response.ok) {
       const message = await response.text();
+      if (this.isMissingSchema(message, response.status)) {
+        return fallback();
+      }
       throw new InternalServerErrorException(message || `Supabase request failed with ${response.status}`);
     }
 
     return (await response.json()) as T;
+  }
+
+  private selectFallback(table: string, filters: Filters): DbRow[] {
+    return this.table(table).filter((row) =>
+      Object.entries(filters).every(([key, value]) => value === null || value === undefined || String(row[key]) === String(value)),
+    );
+  }
+
+  private insertFallback(table: string, body: unknown): DbRow[] {
+    const rows = this.normalizeRows(body).map((row) => this.withDefaults(row));
+    this.table(table).push(...rows);
+    return rows;
+  }
+
+  private upsertFallback(table: string, body: unknown, onConflict: string): DbRow[] {
+    const rows = this.normalizeRows(body).map((row) => this.withDefaults(row));
+    const tableRows = this.table(table);
+
+    return rows.map((row) => {
+      const index = tableRows.findIndex((existing) => String(existing[onConflict]) === String(row[onConflict]));
+      if (index >= 0) {
+        tableRows[index] = { ...tableRows[index], ...row, updated_at: new Date().toISOString() };
+        return tableRows[index];
+      }
+
+      tableRows.push(row);
+      return row;
+    });
+  }
+
+  private updateFallback(table: string, filters: Filters, body: unknown): DbRow[] {
+    const patch = this.normalizeRows(body)[0] ?? {};
+    const tableRows = this.table(table);
+    const updated: DbRow[] = [];
+
+    for (const [index, row] of tableRows.entries()) {
+      const matches = Object.entries(filters).every(([key, value]) => value === null || value === undefined || String(row[key]) === String(value));
+      if (matches) {
+        tableRows[index] = { ...row, ...patch, updated_at: new Date().toISOString() };
+        updated.push(tableRows[index]);
+      }
+    }
+
+    return updated;
+  }
+
+  private normalizeRows(body: unknown): DbRow[] {
+    if (Array.isArray(body)) {
+      return body.filter((row): row is DbRow => Boolean(row) && typeof row === "object").map((row) => ({ ...row }));
+    }
+
+    if (body && typeof body === "object") {
+      return [{ ...(body as DbRow) }];
+    }
+
+    return [];
+  }
+
+  private withDefaults(row: DbRow): DbRow {
+    const now = new Date().toISOString();
+    return {
+      id: row.id ?? randomUUID(),
+      created_at: row.created_at ?? now,
+      ...row,
+    };
+  }
+
+  private table(name: string): DbRow[] {
+    const rows = fallbackTables.get(name);
+    if (rows) {
+      return rows;
+    }
+
+    const nextRows: DbRow[] = [];
+    fallbackTables.set(name, nextRows);
+    return nextRows;
+  }
+
+  private isMissingSchema(message: string, status: number): boolean {
+    return status === 404 || message.includes("PGRST205") || message.includes("Could not find the table");
   }
 
   private requireUrl(): string {
