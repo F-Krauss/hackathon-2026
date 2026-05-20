@@ -11,6 +11,7 @@ import {
   LogOut,
   MapPinned,
   Medal,
+  Navigation,
   Plus,
   Route,
   ShieldCheck,
@@ -26,6 +27,7 @@ import type {
   DailyRoute,
   DailyRouteSubscription,
   HealthResponse,
+  OptimizedRoute,
   Profile,
   Reward,
   RideOffer,
@@ -44,6 +46,16 @@ import { supabase } from "./utils/supabase";
 
 type Page = "dashboard" | "planner" | "carpools" | "history" | "profile";
 type AuthMode = "sign-in" | "sign-up";
+
+type RoutePreview = {
+  origin?: string;
+  destination: string;
+  waypoints?: string[];
+  label?: string;
+  distanceMeters?: number;
+  durationSeconds?: number;
+  provider?: OptimizedRoute["provider"];
+};
 
 const navItems: Array<{ id: Page; label: string; icon: ReactNode }> = [
   { id: "dashboard", label: "Panel", icon: <Leaf size={18} /> },
@@ -294,29 +306,37 @@ function Planner({ token, onFindCarpool }: { token: string; onFindCarpool: () =>
     <div className="page-stack">
       <PageHeader title="Planificador de rutas" text="Elige una preferencia y compara emisiones, tiempo y costo." />
 
-      <form className="route-form" onSubmit={submit}>
-        <label>
-          Origen
-          <input onChange={(event) => setOrigin(event.target.value)} value={origin} />
-        </label>
-        <label>
-          Destino
-          <input onChange={(event) => setDestination(event.target.value)} value={destination} />
-        </label>
-        <label>
-          Preferencia
-          <select onChange={(event) => setPreference(event.target.value as RoutePreference)} value={preference}>
-            <option value="balanced">Equilibrada</option>
-            <option value="fastest">Mas rapida</option>
-            <option value="cheapest">Mas barata</option>
-            <option value="greenest">Mas ecologica</option>
-          </select>
-        </label>
-        <button className="primary-button" disabled={isLoading} type="submit">
-          <MapPinned size={18} />
-          {isLoading ? "Comparando..." : "Comparar rutas"}
-        </button>
-      </form>
+      <div className="planner-grid">
+        <form className="route-form" onSubmit={submit}>
+          <label>
+            Origen
+            <input onChange={(event) => setOrigin(event.target.value)} value={origin} />
+          </label>
+          <label>
+            Destino
+            <input onChange={(event) => setDestination(event.target.value)} value={destination} />
+          </label>
+          <label>
+            Preferencia
+            <select onChange={(event) => setPreference(event.target.value as RoutePreference)} value={preference}>
+              <option value="balanced">Equilibrada</option>
+              <option value="fastest">Mas rapida</option>
+              <option value="cheapest">Mas barata</option>
+              <option value="greenest">Mas ecologica</option>
+            </select>
+          </label>
+          <button className="primary-button" disabled={isLoading} type="submit">
+            <MapPinned size={18} />
+            {isLoading ? "Comparando..." : "Comparar rutas"}
+          </button>
+        </form>
+
+        <RouteMap
+          route={{ origin, destination, label: "Ruta del planificador" }}
+          text="La ruta se actualiza con el destino escrito y se puede abrir en navegacion."
+          title="Mapa de ruta"
+        />
+      </div>
 
       {error && <p className="error-text">{error}</p>}
 
@@ -353,6 +373,8 @@ function Carpools({ token }: { token: string }) {
   const [dailyRoutes, setDailyRoutes] = useState<DailyRoute[]>([]);
   const [subscriptions, setSubscriptions] = useState<DailyRouteSubscription[]>([]);
   const [matches, setMatches] = useState<CarpoolMatch[]>([]);
+  const [routePreview, setRoutePreview] = useState<RoutePreview | null>(null);
+  const [message, setMessage] = useState("");
   const [form, setForm] = useState<CreateRideOfferRequest & CreateRideRequestRequest>({
     origin: "Centro",
     destination: "Campus Norte",
@@ -392,69 +414,158 @@ function Carpools({ token }: { token: string }) {
 
   async function createOffer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await apiRequest<RideOffer>("/rides/offers", token, {
-      method: "POST",
-      body: JSON.stringify({
-        origin: form.origin,
-        destination: form.destination,
-        departureTime: new Date(form.departureTime).toISOString(),
-        arrivalTime: new Date(form.arrivalTime).toISOString(),
-        seatsAvailable: Number(form.seatsAvailable),
-        maxPassengers: Number(form.maxPassengers),
-        pricePerSeatCents: Number(form.pricePerSeatCents),
-        fuelEfficiencyKmPerLiter: Number(form.fuelEfficiencyKmPerLiter),
-        averageGasPriceCentsPerLiter: Number(form.averageGasPriceCentsPerLiter),
-      }),
-    });
-    refresh();
+    setMessage("");
+
+    try {
+      await apiRequest<RideOffer>("/rides/offers", token, {
+        method: "POST",
+        body: JSON.stringify({
+          origin: form.origin,
+          destination: form.destination,
+          departureTime: new Date(form.departureTime).toISOString(),
+          arrivalTime: new Date(form.arrivalTime).toISOString(),
+          seatsAvailable: Number(form.seatsAvailable),
+          maxPassengers: Number(form.maxPassengers),
+          pricePerSeatCents: Number(form.pricePerSeatCents),
+          fuelEfficiencyKmPerLiter: Number(form.fuelEfficiencyKmPerLiter),
+          averageGasPriceCentsPerLiter: Number(form.averageGasPriceCentsPerLiter),
+        }),
+      });
+      setRoutePreview({ origin: form.origin, destination: form.destination, label: "Oferta publicada" });
+      setMessage("Oferta publicada.");
+      refresh();
+    } catch (caught) {
+      setMessage(getErrorMessage(caught, "No se pudo publicar la oferta."));
+    }
   }
 
   async function createRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const request = await apiRequest<RideRequest>("/rides/requests", token, {
-      method: "POST",
-      body: JSON.stringify({
-        origin: form.origin,
-        destination: form.destination,
-        departureTime: new Date(form.departureTime).toISOString(),
-        arrivalTime: form.arrivalTime ? new Date(form.arrivalTime).toISOString() : undefined,
-        seatsNeeded: Number(form.seatsNeeded),
-        preference: form.preference,
-        bikeFallbackRequested: Boolean(form.bikeFallbackRequested),
-      }),
-    });
-    setRequests((current) => [request, ...current]);
+    setMessage("");
+
+    try {
+      const request = await apiRequest<RideRequest>("/rides/requests", token, {
+        method: "POST",
+        body: JSON.stringify({
+          origin: form.origin,
+          destination: form.destination,
+          departureTime: new Date(form.departureTime).toISOString(),
+          arrivalTime: form.arrivalTime ? new Date(form.arrivalTime).toISOString() : undefined,
+          seatsNeeded: Number(form.seatsNeeded),
+          preference: form.preference,
+          bikeFallbackRequested: Boolean(form.bikeFallbackRequested),
+        }),
+      });
+      setRequests((current) => [request, ...current]);
+      setRoutePreview({ origin: form.origin, destination: form.destination, label: "Solicitud publicada" });
+      setMessage("Solicitud publicada.");
+    } catch (caught) {
+      setMessage(getErrorMessage(caught, "No se pudo solicitar el viaje compartido."));
+    }
   }
 
   async function suggestMatches() {
-    setMatches(
-      await apiRequest<CarpoolMatch[]>("/carpools/match", token, {
+    setMessage("");
+
+    try {
+      const nextMatches = await apiRequest<CarpoolMatch[]>("/carpools/match", token, {
         method: "POST",
         body: JSON.stringify({ requestId: requests[0]?.id }),
-      }),
-    );
+      });
+      setMatches(nextMatches);
+      if (nextMatches[0]) {
+        await refreshMatchedRoute(nextMatches[0]);
+      } else {
+        setMessage("No hay coincidencias compatibles por ahora.");
+      }
+    } catch (caught) {
+      setMessage(getErrorMessage(caught, "No se pudieron buscar coincidencias."));
+    }
+  }
+
+  async function refreshMatchedRoute(match: CarpoolMatch) {
+    const offer = offers.find((item) => item.id === match.offerId);
+    const request = requests.find((item) => item.id === match.requestId);
+    if (!offer || !request) {
+      setRoutePreview({ origin: form.origin, destination: form.destination, label: "Ruta de viaje compartido" });
+      return;
+    }
+
+    const fallbackPreview: RoutePreview = {
+      origin: offer.origin,
+      destination: offer.destination,
+      waypoints: [request.origin, request.destination],
+      label: "Ruta compartida con recogida",
+    };
+
+    try {
+      const optimized = await apiRequest<OptimizedRoute>("/routes/optimize", token, {
+        method: "POST",
+        body: JSON.stringify({
+          origin: { label: "Origen del conductor", address: offer.origin },
+          destination: { label: "Destino del conductor", address: offer.destination },
+          stops: [
+            { label: "Recogida del pasajero", address: request.origin },
+            { label: "Bajada del pasajero", address: request.destination },
+          ],
+          preference: request.preference,
+        }),
+      });
+
+      setRoutePreview({
+        ...fallbackPreview,
+        waypoints: optimized.orderedStops.map((stop) => stop.address),
+        distanceMeters: optimized.distanceMeters,
+        durationSeconds: optimized.durationSeconds,
+        provider: optimized.provider,
+      });
+      setMessage("Ruta actualizada con navegacion.");
+    } catch (caught) {
+      setRoutePreview(fallbackPreview);
+      setMessage(getErrorMessage(caught, "Coincidencia encontrada. Abre navegacion para ajustar la ruta."));
+    }
   }
 
   async function createDailyRoute(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const route = await apiRequest<DailyRoute>("/daily-routes", token, {
-      method: "POST",
-      body: JSON.stringify({
-        ...dailyRouteForm,
-        maxPassengers: Number(dailyRouteForm.maxPassengers),
-        fuelEfficiencyKmPerLiter: Number(dailyRouteForm.fuelEfficiencyKmPerLiter),
-        averageGasPriceCentsPerLiter: Number(dailyRouteForm.averageGasPriceCentsPerLiter),
-      }),
-    });
-    setDailyRoutes((current) => [route, ...current]);
+    setMessage("");
+
+    try {
+      const route = await apiRequest<DailyRoute>("/daily-routes", token, {
+        method: "POST",
+        body: JSON.stringify({
+          ...dailyRouteForm,
+          maxPassengers: Number(dailyRouteForm.maxPassengers),
+          fuelEfficiencyKmPerLiter: Number(dailyRouteForm.fuelEfficiencyKmPerLiter),
+          averageGasPriceCentsPerLiter: Number(dailyRouteForm.averageGasPriceCentsPerLiter),
+        }),
+      });
+      setDailyRoutes((current) => [route, ...current]);
+      setRoutePreview({ origin: route.origin, destination: route.destination, label: route.label });
+      setMessage("Ruta diaria guardada.");
+    } catch (caught) {
+      setMessage(getErrorMessage(caught, "No se pudo guardar la ruta diaria."));
+    }
   }
 
   async function subscribeToRoute(routeId: string) {
-    const subscription = await apiRequest<DailyRouteSubscription>(`/daily-routes/${routeId}/subscribe`, token, {
-      method: "POST",
-      body: JSON.stringify(subscriptionForm),
-    });
-    setSubscriptions((current) => [subscription, ...current]);
+    setMessage("");
+
+    try {
+      const subscription = await apiRequest<DailyRouteSubscription>(`/daily-routes/${routeId}/subscribe`, token, {
+        method: "POST",
+        body: JSON.stringify(subscriptionForm),
+      });
+      setSubscriptions((current) => [subscription, ...current]);
+      setRoutePreview({
+        origin: subscription.pickupAddress,
+        destination: subscription.dropoffAddress,
+        label: "Suscripcion a ruta",
+      });
+      setMessage("Solicitud enviada al conductor.");
+    } catch (caught) {
+      setMessage(getErrorMessage(caught, "No se pudo suscribir a esta ruta."));
+    }
   }
 
   return (
@@ -530,6 +641,14 @@ function Carpools({ token }: { token: string }) {
           </button>
         </form>
       </div>
+
+      <RouteMap
+        route={routePreview ?? { origin: form.origin, destination: form.destination, label: "Ruta de viaje compartido" }}
+        text="Al encontrar coincidencias, la ruta se refresca con recogida y bajada para abrirla en navegacion."
+        title="Mapa de carpool"
+      />
+
+      {message && <p className="muted-text">{message}</p>}
 
       <section className="data-panel">
         <PanelTitle icon={<CalendarDays size={20} />} title="Rutas diarias" />
@@ -642,6 +761,10 @@ function Carpools({ token }: { token: string }) {
                 <span>${(match.estimatedSavingsCents / 100).toFixed(2)} ahorrados</span>
                 <span>{match.estimatedCo2SavingsGrams} g CO2</span>
                 <span>{match.pickupOffsetMeters} m a la recogida</span>
+                <button className="secondary-button compact" onClick={() => refreshMatchedRoute(match)} type="button">
+                  <Navigation size={16} />
+                  Actualizar ruta
+                </button>
               </div>
             </article>
           ))}
@@ -827,21 +950,29 @@ function ProfilePage({ token, email }: { token: string; email: string }) {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await apiRequest<Profile>("/profile", token, {
-      method: "PUT",
-      body: JSON.stringify(profile),
-    });
-    setMessage("Perfil guardado.");
+    try {
+      await apiRequest<Profile>("/profile", token, {
+        method: "PUT",
+        body: JSON.stringify(profile),
+      });
+      setMessage("Perfil guardado.");
+    } catch (caught) {
+      setMessage(getErrorMessage(caught, "No se pudo guardar el perfil."));
+    }
   }
 
   async function createVehicle(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const vehicle = await apiRequest<Vehicle>("/vehicles", token, {
-      method: "POST",
-      body: JSON.stringify(vehicleForm),
-    });
-    setVehicles((current) => [vehicle, ...current]);
-    setMessage("Vehiculo guardado.");
+    try {
+      const vehicle = await apiRequest<Vehicle>("/vehicles", token, {
+        method: "POST",
+        body: JSON.stringify(vehicleForm),
+      });
+      setVehicles((current) => [vehicle, ...current]);
+      setMessage("Vehiculo guardado.");
+    } catch (caught) {
+      setMessage(getErrorMessage(caught, "No se pudo guardar el vehiculo."));
+    }
   }
 
   async function changePassword(event: FormEvent<HTMLFormElement>) {
@@ -1141,8 +1272,88 @@ function PanelTitle({ icon, title }: { icon: ReactNode; title: string }) {
   );
 }
 
+function RouteMap({ route, text, title }: { route: RoutePreview; text: string; title: string }) {
+  const destination = route.destination.trim();
+  if (!destination) {
+    return null;
+  }
+
+  return (
+    <section className="map-panel">
+      <div className="map-header">
+        <PanelTitle icon={<MapPinned size={20} />} title={title} />
+        <a className="secondary-button compact" href={buildNavigationUrl(route)} rel="noreferrer" target="_blank">
+          <Navigation size={16} />
+          Abrir navegacion
+        </a>
+      </div>
+      <p className="muted-text">{route.label ? `${route.label}: ${formatRouteSummary(route)}` : formatRouteSummary(route)}</p>
+      <iframe
+        loading="lazy"
+        referrerPolicy="no-referrer-when-downgrade"
+        src={buildMapEmbedUrl(route)}
+        title={title}
+      />
+      <div className="map-footer">
+        <span>{text}</span>
+        {(route.distanceMeters || route.durationSeconds) && (
+          <strong>
+            {route.distanceMeters ? `${Math.round(route.distanceMeters / 1000)} km` : ""}
+            {route.distanceMeters && route.durationSeconds ? " · " : ""}
+            {route.durationSeconds ? `${Math.round(route.durationSeconds / 60)} min` : ""}
+          </strong>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function toInputDateTime(date: Date): string {
   return date.toISOString().slice(0, 16);
+}
+
+function buildMapEmbedUrl(route: RoutePreview): string {
+  const destination = route.destination.trim();
+  const origin = route.origin?.trim();
+  const waypoints = (route.waypoints ?? []).map((waypoint) => waypoint.trim()).filter(Boolean);
+  const params = new URLSearchParams({ output: "embed" });
+
+  if (origin) {
+    params.set("saddr", origin);
+    params.set("daddr", [...waypoints, destination].join(" to "));
+  } else {
+    params.set("q", destination);
+  }
+
+  return `https://maps.google.com/maps?${params.toString()}`;
+}
+
+function buildNavigationUrl(route: RoutePreview): string {
+  const destination = route.destination.trim();
+  const origin = route.origin?.trim();
+  const waypoints = (route.waypoints ?? []).map((waypoint) => waypoint.trim()).filter(Boolean);
+  const params = new URLSearchParams({ api: "1", destination, travelmode: "driving" });
+
+  if (origin) {
+    params.set("origin", origin);
+  }
+
+  if (waypoints.length) {
+    params.set("waypoints", waypoints.join("|"));
+  }
+
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
+function formatRouteSummary(route: RoutePreview): string {
+  const origin = route.origin?.trim();
+  const waypoints = (route.waypoints ?? []).map((waypoint) => waypoint.trim()).filter(Boolean);
+  const stops = [origin, ...waypoints, route.destination.trim()].filter(Boolean);
+  return stops.join(" -> ");
+}
+
+function getErrorMessage(caught: unknown, fallback: string): string {
+  return caught instanceof Error ? caught.message : fallback;
 }
 
 function formatDays(days: number[]): string {

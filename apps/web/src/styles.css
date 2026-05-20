@@ -33,8 +33,9 @@ button {
   align-items: center;
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
   justify-content: center;
-  padding: 24px;
+  padding: 16px;
 }
 
 .auth-screen {
@@ -48,15 +49,17 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 8px;
   box-shadow: 0 22px 70px rgba(13, 32, 20, 0.24);
+  max-height: calc(100dvh - 32px);
   max-width: 520px;
-  padding: 36px;
+  overflow: auto;
+  padding: clamp(20px, 4dvh, 32px);
   width: 100%;
 }
 
 .auth-panel h1 {
-  font-size: clamp(2rem, 5vw, 3.8rem);
-  line-height: 0.98;
-  margin: 24px 0 16px;
+  font-size: clamp(1.75rem, 5dvh, 3rem);
+  line-height: 1;
+  margin: clamp(14px, 3dvh, 22px) 0 clamp(10px, 2dvh, 14px);
 }
 
 .auth-toggle {
@@ -66,7 +69,7 @@ button {
   display: grid;
   gap: 4px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 22px 0;
+  margin: clamp(14px, 3dvh, 20px) 0;
   padding: 4px;
 }
 
@@ -198,7 +201,8 @@ button {
 }
 
 .summary-grid,
-.two-column {
+.two-column,
+.planner-grid {
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -208,11 +212,17 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.planner-grid {
+  align-items: stretch;
+  grid-template-columns: minmax(280px, 0.86fr) minmax(320px, 1.14fr);
+}
+
 .summary-card,
 .status-panel,
 .data-panel,
 .ride-row,
 .route-form,
+.map-panel,
 .option-card,
 .reward-row {
   background: #ffffff;
@@ -301,8 +311,45 @@ button {
 }
 
 .route-form,
-.data-panel {
+.data-panel,
+.map-panel {
   padding: 22px;
+}
+
+.map-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.map-header,
+.map-footer {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.map-header {
+  flex-wrap: wrap;
+}
+
+.map-panel iframe {
+  aspect-ratio: 16 / 9;
+  background: #eef2ec;
+  border: 0;
+  border-radius: 8px;
+  min-height: 280px;
+  width: 100%;
+}
+
+.map-footer {
+  color: #607067;
+  font-size: 0.92rem;
+}
+
+.map-footer strong {
+  color: #1f7a3c;
+  white-space: nowrap;
 }
 
 .stack-form label,
@@ -487,7 +534,8 @@ button {
 
   .summary-grid,
   .two-column,
-  .two-column.dense {
+  .two-column.dense,
+  .planner-grid {
     grid-template-columns: 1fr;
   }
 
@@ -495,9 +543,14 @@ button {
   .status-panel,
   .ride-row,
   .reward-row,
-  .option-card {
+  .option-card,
+  .map-footer {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .map-panel iframe {
+    min-height: 240px;
   }
 
   .ride-meta,
