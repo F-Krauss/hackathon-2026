@@ -274,13 +274,13 @@ function Dashboard({ token }: { token: string }) {
         <MetricCard icon={<CarFront />} label="Compartidos" value={stats?.carpoolTrips ?? 0} />
       </div>
 
-      <section className="status-panel">
+      {/* <section className="status-panel">
         <div>
           <h2>Estado del sistema</h2>
           <p>{health ? `${health.service} esta ${translateStatus(health.status)}` : "Revisando el estado del backend..."}</p>
         </div>
         <span className={health ? "status-pill ok" : "status-pill"}>{health ? translateStatus(health.status) : "revisando"}</span>
-      </section>
+      </section> */}
 
       <section className="data-panel">
         <PanelTitle icon={<Medal size={20} />} title="Recompensas" />
