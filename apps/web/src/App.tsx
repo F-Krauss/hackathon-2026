@@ -26,7 +26,7 @@ import type {
   CreateRideRequestRequest,
   DailyRoute,
   DailyRouteSubscription,
-  HealthResponse,
+  // HealthResponse,
   OptimizedRoute,
   Profile,
   Reward,
@@ -251,12 +251,12 @@ function AuthPanel() {
 }
 
 function Dashboard({ token }: { token: string }) {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
+  // const [health, setHealth] = useState<HealthResponse | null>(null);
   const [stats, setStats] = useState<SavingsStats | null>(null);
   const [rewards, setRewards] = useState<Reward[]>([]);
 
   useEffect(() => {
-    void apiRequest<HealthResponse>("/health", null).then(setHealth);
+    // void apiRequest<HealthResponse>("/health", null).then(setHealth);
     void apiRequest<SavingsStats>("/stats/savings", token).then(setStats).catch(() => setStats(emptyStats));
     void apiRequest<Reward[]>("/rewards", token).then(setRewards).catch(() => setRewards(seedRewards));
   }, [token]);
@@ -1507,9 +1507,9 @@ function formatDays(days: number[]): string {
     .join(", ");
 }
 
-function translateStatus(status: string): string {
-  return status === "ok" ? "activo" : "degradado";
-}
+// function translateStatus(status: string): string {
+//   return status === "ok" ? "activo" : "degradado";
+// }
 
 function translatePreference(preference: RoutePreference): string {
   const labels: Record<RoutePreference, string> = {
