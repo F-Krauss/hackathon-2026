@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
@@ -57,6 +57,18 @@ type RoutePreview = {
   provider?: OptimizedRoute["provider"];
 };
 
+type UserLocation = {
+  latitude: number;
+  longitude: number;
+};
+
+type PlaceSuggestion = {
+  display_name: string;
+  lat: string;
+  lon: string;
+  type?: string;
+};
+
 const navItems: Array<{ id: Page; label: string; icon: ReactNode }> = [
   { id: "dashboard", label: "Panel", icon: <Leaf size={18} /> },
   { id: "planner", label: "Planificador", icon: <Route size={18} /> },
@@ -69,6 +81,7 @@ function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [page, setPage] = useState<Page>("dashboard");
   const [isLoading, setIsLoading] = useState(true);
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
 
   useEffect(() => {
     const loadingFallback = window.setTimeout(() => {
@@ -90,6 +103,23 @@ function App() {
       data.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!session || userLocation || !navigator.geolocation) {
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setUserLocation({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+      },
+      () => undefined,
+      { enableHighAccuracy: false, maximumAge: 10 * 60 * 1000, timeout: 8000 },
+    );
+  }, [session, userLocation]);
 
   if (isLoading) {
     return <div className="screen-center">Cargando GoPath...</div>;
@@ -133,8 +163,8 @@ function App() {
 
       <section className="content-panel">
         {page === "dashboard" && <Dashboard token={token} />}
-        {page === "planner" && <Planner token={token} onFindCarpool={() => setPage("carpools")} />}
-        {page === "carpools" && <Carpools token={token} />}
+        {page === "planner" && <Planner token={token} userLocation={userLocation} onFindCarpool={() => setPage("carpools")} />}
+        {page === "carpools" && <Carpools token={token} userLocation={userLocation} />}
         {page === "history" && <HistoryPage token={token} />}
         {page === "profile" && <ProfilePage token={token} email={session.user.email ?? ""} />}
       </section>
@@ -270,7 +300,7 @@ function Dashboard({ token }: { token: string }) {
   );
 }
 
-function Planner({ token, onFindCarpool }: { token: string; onFindCarpool: () => void }) {
+function Planner({ token, userLocation, onFindCarpool }: { token: string; userLocation: UserLocation | null; onFindCarpool: () => void }) {
   const [origin, setOrigin] = useState("Centro");
   const [destination, setDestination] = useState("Campus Norte");
   const [preference, setPreference] = useState<RoutePreference>("balanced");
@@ -308,14 +338,8 @@ function Planner({ token, onFindCarpool }: { token: string; onFindCarpool: () =>
 
       <div className="planner-grid">
         <form className="route-form" onSubmit={submit}>
-          <label>
-            Origen
-            <input onChange={(event) => setOrigin(event.target.value)} value={origin} />
-          </label>
-          <label>
-            Destino
-            <input onChange={(event) => setDestination(event.target.value)} value={destination} />
-          </label>
+          <PlaceInput label="Origen" onChange={setOrigin} userLocation={userLocation} value={origin} />
+          <PlaceInput label="Destino" onChange={setDestination} userLocation={userLocation} value={destination} />
           <label>
             Preferencia
             <select onChange={(event) => setPreference(event.target.value as RoutePreference)} value={preference}>
@@ -367,7 +391,7 @@ function Planner({ token, onFindCarpool }: { token: string; onFindCarpool: () =>
   );
 }
 
-function Carpools({ token }: { token: string }) {
+function Carpools({ token, userLocation }: { token: string; userLocation: UserLocation | null }) {
   const [offers, setOffers] = useState<RideOffer[]>([]);
   const [requests, setRequests] = useState<RideRequest[]>([]);
   const [dailyRoutes, setDailyRoutes] = useState<DailyRoute[]>([]);
@@ -575,7 +599,7 @@ function Carpools({ token }: { token: string }) {
       <div className="two-column">
         <form className="route-form" onSubmit={createOffer}>
           <PanelTitle icon={<CarFront size={20} />} title="Ofrecer un viaje" />
-          <SharedRideFields form={form} setForm={setForm} />
+          <SharedRideFields form={form} setForm={setForm} userLocation={userLocation} />
           <label>
             Asientos disponibles
             <input
@@ -617,7 +641,7 @@ function Carpools({ token }: { token: string }) {
 
         <form className="route-form" onSubmit={createRequest}>
           <PanelTitle icon={<UsersRound size={20} />} title="Solicitar un viaje" />
-          <SharedRideFields form={form} setForm={setForm} />
+          <SharedRideFields form={form} setForm={setForm} userLocation={userLocation} />
           <label className="checkbox-row">
             <input
               checked={Boolean(form.bikeFallbackRequested)}
@@ -658,17 +682,18 @@ function Carpools({ token }: { token: string }) {
             <input onChange={(event) => setDailyRouteForm({ ...dailyRouteForm, label: event.target.value })} value={dailyRouteForm.label} />
           </label>
           <div className="two-column dense">
-            <label>
-              Origen
-              <input onChange={(event) => setDailyRouteForm({ ...dailyRouteForm, origin: event.target.value })} value={dailyRouteForm.origin} />
-            </label>
-            <label>
-              Destino
-              <input
-                onChange={(event) => setDailyRouteForm({ ...dailyRouteForm, destination: event.target.value })}
-                value={dailyRouteForm.destination}
-              />
-            </label>
+            <PlaceInput
+              label="Origen"
+              onChange={(origin) => setDailyRouteForm({ ...dailyRouteForm, origin })}
+              userLocation={userLocation}
+              value={dailyRouteForm.origin}
+            />
+            <PlaceInput
+              label="Destino"
+              onChange={(destination) => setDailyRouteForm({ ...dailyRouteForm, destination })}
+              userLocation={userLocation}
+              value={dailyRouteForm.destination}
+            />
           </div>
           <div className="day-picker" aria-label="Dias de la semana">
             {dayLabels.map((day) => (
@@ -782,20 +807,16 @@ function Carpools({ token }: { token: string }) {
 function SharedRideFields({
   form,
   setForm,
+  userLocation,
 }: {
   form: CreateRideOfferRequest & CreateRideRequestRequest;
   setForm: (form: CreateRideOfferRequest & CreateRideRequestRequest) => void;
+  userLocation: UserLocation | null;
 }) {
   return (
     <>
-      <label>
-        Origen
-        <input onChange={(event) => setForm({ ...form, origin: event.target.value })} value={form.origin} />
-      </label>
-      <label>
-        Destino
-        <input onChange={(event) => setForm({ ...form, destination: event.target.value })} value={form.destination} />
-      </label>
+      <PlaceInput label="Origen" onChange={(origin) => setForm({ ...form, origin })} userLocation={userLocation} value={form.origin} />
+      <PlaceInput label="Destino" onChange={(destination) => setForm({ ...form, destination })} userLocation={userLocation} value={form.destination} />
       <label>
         Salida
         <input
@@ -1289,6 +1310,8 @@ function RouteMap({ route, text, title }: { route: RoutePreview; text: string; t
       </div>
       <p className="muted-text">{route.label ? `${route.label}: ${formatRouteSummary(route)}` : formatRouteSummary(route)}</p>
       <iframe
+        allow="fullscreen"
+        allowFullScreen
         loading="lazy"
         referrerPolicy="no-referrer-when-downgrade"
         src={buildMapEmbedUrl(route)}
@@ -1308,8 +1331,129 @@ function RouteMap({ route, text, title }: { route: RoutePreview; text: string; t
   );
 }
 
+function PlaceInput({
+  label,
+  value,
+  userLocation,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  userLocation: UserLocation | null;
+  onChange: (value: string) => void;
+}) {
+  const inputId = useId();
+  const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+
+  useEffect(() => {
+    const query = value.trim();
+    if (query.length < 3) {
+      setSuggestions([]);
+      setIsSearching(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      setIsSearching(true);
+      fetch(buildPlaceSearchUrl(query, userLocation), { signal: controller.signal })
+        .then((response) => (response.ok ? response.json() : []))
+        .then((places: PlaceSuggestion[]) => {
+          setSuggestions(places.filter((place) => place.display_name).slice(0, 5));
+          setIsOpen(true);
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) {
+            setSuggestions([]);
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setIsSearching(false);
+          }
+        });
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [value, userLocation]);
+
+  function selectPlace(place: PlaceSuggestion) {
+    onChange(place.display_name);
+    setSuggestions([]);
+    setIsOpen(false);
+  }
+
+  return (
+    <label className="place-field">
+      {label}
+      <span className="place-input-wrap">
+        <input
+          aria-autocomplete="list"
+          aria-controls={`${inputId}-suggestions`}
+          aria-expanded={isOpen && suggestions.length > 0}
+          autoComplete="off"
+          onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
+          onChange={(event) => onChange(event.target.value)}
+          onFocus={() => setIsOpen(suggestions.length > 0)}
+          placeholder="Escribe una direccion o lugar real"
+          value={value}
+        />
+        <span className="place-status">{isSearching ? "Buscando..." : userLocation ? "Cerca de ti" : "Ubicacion manual"}</span>
+      </span>
+      {isOpen && suggestions.length > 0 && (
+        <span className="place-suggestions" id={`${inputId}-suggestions`} role="listbox">
+          {suggestions.map((place) => (
+            <button
+              key={`${place.lat}-${place.lon}-${place.display_name}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => selectPlace(place)}
+              role="option"
+              type="button"
+            >
+              <MapPinned size={16} />
+              <span>{place.display_name}</span>
+            </button>
+          ))}
+        </span>
+      )}
+    </label>
+  );
+}
+
 function toInputDateTime(date: Date): string {
   return date.toISOString().slice(0, 16);
+}
+
+function buildPlaceSearchUrl(query: string, userLocation: UserLocation | null): string {
+  const params = new URLSearchParams({
+    q: query,
+    format: "jsonv2",
+    addressdetails: "1",
+    limit: "5",
+    "accept-language": "es",
+  });
+
+  if (userLocation) {
+    const latitudeDelta = 0.75;
+    const longitudeDelta = 0.75;
+    params.set(
+      "viewbox",
+      [
+        userLocation.longitude - longitudeDelta,
+        userLocation.latitude + latitudeDelta,
+        userLocation.longitude + longitudeDelta,
+        userLocation.latitude - latitudeDelta,
+      ].join(","),
+    );
+    params.set("bounded", "0");
+  }
+
+  return `https://nominatim.openstreetmap.org/search?${params.toString()}`;
 }
 
 function buildMapEmbedUrl(route: RoutePreview): string {
