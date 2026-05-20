@@ -176,7 +176,13 @@ export class SupabaseRestService {
   }
 
   private isMissingSchema(message: string, status: number): boolean {
-    return status === 404 || message.includes("PGRST205") || message.includes("Could not find the table");
+    return (
+      status === 404 ||
+      message.includes("PGRST204") ||
+      message.includes("PGRST205") ||
+      message.includes("Could not find the table") ||
+      message.includes("schema cache")
+    );
   }
 
   private requireUrl(): string {
