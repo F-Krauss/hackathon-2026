@@ -9,10 +9,10 @@
     "packages/shared"
   ],
   "scripts": {
-    "dev": "concurrently -n web,api,routes -c green,blue,magenta \"npm run dev:web\" \"npm run dev:api\" \"npm run dev:routes\"",
+    "dev": "concurrently -n web,api,agent -c green,blue,magenta \"npm run dev:web\" \"npm run dev:api\" \"npm run dev:agent\"",
     "dev:web": "npm run dev -w @eco-carpool/web",
     "dev:api": "npm run dev -w @eco-carpool/api",
-    "dev:routes": "cd services/routes && python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port ${ROUTES_PORT:-8001}",
+    "dev:agent": "cd services/agent && python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port ${AGENT_PORT:-8001}",
     "build": "npm run build -w @eco-carpool/shared && npm run build -w @eco-carpool/api && npm run build -w @eco-carpool/web",
     "typecheck": "npm run typecheck -w @eco-carpool/shared && npm run typecheck -w @eco-carpool/api && npm run typecheck -w @eco-carpool/web",
     "lint": "npm run typecheck",

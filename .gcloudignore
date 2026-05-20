@@ -1,0 +1,13 @@
+.git
+.gitignore
+node_modules
+apps/*/node_modules
+packages/*/node_modules
+services/*/.venv
+dist
+apps/*/dist
+packages/*/dist
+.env
+apps/*/.env
+services/*/.env
+.DS_Store

@@ -1,20 +1,93 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { Bike, CarFront, Leaf, MapPinned, Plus, Route } from "lucide-react";
-import type { HealthResponse, Ride, RouteEstimate, RouteEstimateRequest } from "@eco-carpool/shared";
+import type { Session } from "@supabase/supabase-js";
+import {
+  Bike,
+  CalendarDays,
+  CarFront,
+  History,
+  Leaf,
+  LockKeyhole,
+  LogOut,
+  MapPinned,
+  Medal,
+  Plus,
+  Route,
+  ShieldCheck,
+  UserRound,
+  UsersRound,
+} from "lucide-react";
+import type {
+  CarpoolMatch,
+  CreateDailyRouteRequest,
+  CreateDailyRouteSubscriptionRequest,
+  CreateRideOfferRequest,
+  CreateRideRequestRequest,
+  DailyRoute,
+  DailyRouteSubscription,
+  HealthResponse,
+  Profile,
+  Reward,
+  RideOffer,
+  RideRequest,
+  RouteComparisonResponse,
+  RoutePreference,
+  SavingsStats,
+  TransportMode,
+  Trip,
+  UpsertProfileRequest,
+  UpsertVehicleRequest,
+  Vehicle,
+} from "@eco-carpool/shared";
+import { apiRequest } from "./lib/api";
+import { supabase } from "./utils/supabase";
 
-type Page = "home" | "rides" | "route";
+type Page = "dashboard" | "planner" | "carpools" | "history" | "profile";
+type AuthMode = "sign-in" | "sign-up";
 
-const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
-
-const navItems: Array<{ id: Page; label: string }> = [
-  { id: "home", label: "Home" },
-  { id: "rides", label: "Rides" },
-  { id: "route", label: "Route estimate" },
+const navItems: Array<{ id: Page; label: string; icon: ReactNode }> = [
+  { id: "dashboard", label: "Panel", icon: <Leaf size={18} /> },
+  { id: "planner", label: "Planificador", icon: <Route size={18} /> },
+  { id: "carpools", label: "Viajes compartidos", icon: <UsersRound size={18} /> },
+  { id: "history", label: "Historial", icon: <History size={18} /> },
+  { id: "profile", label: "Perfil", icon: <UserRound size={18} /> },
 ];
 
 function App() {
-  const [page, setPage] = useState<Page>("home");
+  const [session, setSession] = useState<Session | null>(null);
+  const [page, setPage] = useState<Page>("dashboard");
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const loadingFallback = window.setTimeout(() => {
+      setIsLoading(false);
+    }, 1500);
+
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      window.clearTimeout(loadingFallback);
+      setIsLoading(false);
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+    });
+
+    return () => {
+      window.clearTimeout(loadingFallback);
+      data.subscription.unsubscribe();
+    };
+  }, []);
+
+  if (isLoading) {
+    return <div className="screen-center">Cargando GoPath...</div>;
+  }
+
+  if (!session) {
+    return <AuthPanel />;
+  }
+
+  const token = session.access_token;
 
   return (
     <main className="app-shell">
@@ -23,10 +96,10 @@ function App() {
           <span className="brand-mark">
             <Leaf size={22} />
           </span>
-          <span>Eco Carpool</span>
+          <span>GoPath</span>
         </div>
 
-        <nav className="nav-list" aria-label="Primary navigation">
+        <nav className="nav-list" aria-label="Navegacion principal">
           {navItems.map((item) => (
             <button
               className={page === item.id ? "nav-button active" : "nav-button"}
@@ -34,175 +107,184 @@ function App() {
               onClick={() => setPage(item.id)}
               type="button"
             >
+              {item.icon}
               {item.label}
             </button>
           ))}
         </nav>
+
+        <button className="sign-out-button" onClick={() => supabase.auth.signOut()} type="button">
+          <LogOut size={18} />
+          Cerrar sesion
+        </button>
       </aside>
 
       <section className="content-panel">
-        {page === "home" && <HomePage />}
-        {page === "rides" && <RidesPage />}
-        {page === "route" && <RouteEstimatePage />}
+        {page === "dashboard" && <Dashboard token={token} />}
+        {page === "planner" && <Planner token={token} onFindCarpool={() => setPage("carpools")} />}
+        {page === "carpools" && <Carpools token={token} />}
+        {page === "history" && <HistoryPage token={token} />}
+        {page === "profile" && <ProfilePage token={token} email={session.user.email ?? ""} />}
       </section>
     </main>
   );
 }
 
-function HomePage() {
+function AuthPanel() {
+  const [mode, setMode] = useState<AuthMode>("sign-in");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("Inicia sesion o crea una cuenta para planear viajes mas limpios.");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSubmitting(true);
+
+    const { data, error } =
+      mode === "sign-up"
+        ? await supabase.auth.signUp({ email, password })
+        : await supabase.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      setMessage(error.message);
+    } else if (mode === "sign-up" && !data.session) {
+      setMessage("Cuenta creada, pero Supabase tiene confirmacion por correo activa. Desactiva la confirmacion por correo para entrar sin enlaces.");
+    } else {
+      setMessage(mode === "sign-up" ? "Cuenta creada." : "Sesion iniciada.");
+    }
+
+    setIsSubmitting(false);
+  }
+
+  return (
+    <main className="auth-screen">
+      <section className="auth-panel">
+        <div className="brand large">
+          <span className="brand-mark">
+            <Leaf size={24} />
+          </span>
+          <span>GoPath</span>
+        </div>
+        <h1>Planea rutas mas baratas y limpias con viajes compartidos.</h1>
+        <p>{message}</p>
+        <div className="auth-toggle" aria-label="Modo de autenticacion">
+          <button className={mode === "sign-in" ? "active" : ""} onClick={() => setMode("sign-in")} type="button">
+            Iniciar sesion
+          </button>
+          <button className={mode === "sign-up" ? "active" : ""} onClick={() => setMode("sign-up")} type="button">
+            Crear cuenta
+          </button>
+        </div>
+        <form className="stack-form" onSubmit={submit}>
+          <label>
+            Correo electronico
+            <input
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="tu@ejemplo.com"
+              required
+              type="email"
+              value={email}
+            />
+          </label>
+          <label>
+            Contrasena
+            <input
+              autoComplete={mode === "sign-up" ? "new-password" : "current-password"}
+              minLength={6}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Minimo 6 caracteres"
+              required
+              type="password"
+              value={password}
+            />
+          </label>
+          <button className="primary-button" disabled={isSubmitting} type="submit">
+            {isSubmitting ? "Procesando..." : mode === "sign-up" ? "Crear cuenta" : "Iniciar sesion"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function Dashboard({ token }: { token: string }) {
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [stats, setStats] = useState<SavingsStats | null>(null);
+  const [rewards, setRewards] = useState<Reward[]>([]);
+
+  useEffect(() => {
+    void apiRequest<HealthResponse>("/health", null).then(setHealth);
+    void apiRequest<SavingsStats>("/stats/savings", token).then(setStats).catch(() => setStats(emptyStats));
+    void apiRequest<Reward[]>("/rewards", token).then(setRewards).catch(() => setRewards(seedRewards));
+  }, [token]);
+
   return (
     <div className="page-stack">
-      <header className="page-header">
-        <div>
-          <h1>Eco-friendly carpool skeleton</h1>
-          <p>Frontend, API, and route service are wired for future ride-sharing requirements.</p>
-        </div>
-      </header>
+      <PageHeader
+        title="Panel de movilidad"
+        text="Compara rutas por tiempo, costo y CO2, y encuentra viajes compartidos compatibles."
+      />
 
       <div className="summary-grid">
-        <SummaryCard icon={<CarFront />} title="Ride listings" text="Placeholder ride cards from the NestJS API." />
-        <SummaryCard icon={<Route />} title="Route estimates" text="NestJS proxies estimate requests to FastAPI." />
-        <SummaryCard icon={<Bike />} title="CO2 savings" text="Mock values reserve space for sustainability metrics." />
+        <MetricCard icon={<Route />} label="Viajes" value={stats?.tripsCompleted ?? 0} />
+        <MetricCard icon={<Leaf />} label="CO2 ahorrado" value={`${Math.round((stats?.totalCo2SavingsGrams ?? 0) / 1000)} kg`} />
+        <MetricCard icon={<CarFront />} label="Compartidos" value={stats?.carpoolTrips ?? 0} />
       </div>
 
-      <HealthCheck />
-    </div>
-  );
-}
-
-function SummaryCard({ icon, title, text }: { icon: ReactNode; title: string; text: string }) {
-  return (
-    <article className="summary-card">
-      <span className="summary-icon">{icon}</span>
-      <h2>{title}</h2>
-      <p>{text}</p>
-    </article>
-  );
-}
-
-function HealthCheck() {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch(`${apiUrl}/health`)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`API returned ${response.status}`);
-        }
-        return response.json() as Promise<HealthResponse>;
-      })
-      .then(setHealth)
-      .catch((caught: unknown) => {
-        setError(caught instanceof Error ? caught.message : "Unable to reach API");
-      });
-  }, []);
-
-  return (
-    <section className="status-panel">
-      <div>
-        <h2>API connectivity</h2>
-        <p>Checks the NestJS health endpoint configured by VITE_API_URL.</p>
-      </div>
-      <span className={health ? "status-pill ok" : "status-pill"}>
-        {health ? `${health.service}: ${health.status}` : error ?? "Checking..."}
-      </span>
-    </section>
-  );
-}
-
-function RidesPage() {
-  const [rides, setRides] = useState<Ride[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch(`${apiUrl}/rides`)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`API returned ${response.status}`);
-        }
-        return response.json() as Promise<Ride[]>;
-      })
-      .then(setRides)
-      .catch((caught: unknown) => {
-        setError(caught instanceof Error ? caught.message : "Unable to load rides");
-      });
-  }, []);
-
-  return (
-    <div className="page-stack">
-      <header className="page-header">
+      <section className="status-panel">
         <div>
-          <h1>Rides</h1>
-          <p>Placeholder ride data until matching and persistence requirements are added.</p>
+          <h2>Estado del sistema</h2>
+          <p>{health ? `${health.service} esta ${translateStatus(health.status)}` : "Revisando el estado del backend..."}</p>
         </div>
-        <button className="primary-button" type="button">
-          <Plus size={18} />
-          New ride
-        </button>
-      </header>
+        <span className={health ? "status-pill ok" : "status-pill"}>{health ? translateStatus(health.status) : "revisando"}</span>
+      </section>
 
-      {error && <p className="error-text">{error}</p>}
-
-      <div className="ride-list">
-        {rides.map((ride) => (
-          <article className="ride-row" key={ride.id}>
-            <div>
-              <h2>
-                {ride.origin} to {ride.destination}
-              </h2>
-              <p>
-                {ride.driverName} · {new Date(ride.departureTime).toLocaleString()}
-              </p>
-            </div>
-            <div className="ride-meta">
-              <span>{ride.seatsAvailable} seats</span>
-              <span>{ride.status}</span>
-            </div>
-          </article>
-        ))}
-      </div>
+      <section className="data-panel">
+        <PanelTitle icon={<Medal size={20} />} title="Recompensas" />
+        <div className="reward-list">
+          {(rewards.length ? rewards : seedRewards).map((reward) => (
+            <article className="reward-row" key={reward.id}>
+              <div>
+                <strong>{reward.label}</strong>
+                <p>{reward.reason}</p>
+              </div>
+              <span>{reward.points} pts</span>
+            </article>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
 
-function RouteEstimatePage() {
-  const [form, setForm] = useState<RouteEstimateRequest>({
-    origin: "Downtown",
-    destination: "North Campus",
-  });
-  const [estimate, setEstimate] = useState<RouteEstimate | null>(null);
+function Planner({ token, onFindCarpool }: { token: string; onFindCarpool: () => void }) {
+  const [origin, setOrigin] = useState("Centro");
+  const [destination, setDestination] = useState("Campus Norte");
+  const [preference, setPreference] = useState<RoutePreference>("balanced");
+  const [comparison, setComparison] = useState<RouteComparisonResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const distance = useMemo(() => {
-    if (!estimate) {
-      return null;
-    }
-    return `${(estimate.distanceMeters / 1000).toFixed(1)} km`;
-  }, [estimate]);
-
-  async function submitEstimate(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(null);
     setIsLoading(true);
+    setError(null);
 
     try {
-      const response = await fetch(`${apiUrl}/routes/estimate`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(form),
-      });
-
-      if (!response.ok) {
-        throw new Error(`API returned ${response.status}`);
-      }
-
-      setEstimate((await response.json()) as RouteEstimate);
+      setComparison(
+        await apiRequest<RouteComparisonResponse>("/routes/compare", token, {
+          method: "POST",
+          body: JSON.stringify({
+            origin,
+            destination,
+            preference,
+            modes: ["driving", "transit", "carpool", "cycling"],
+          }),
+        }),
+      );
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to estimate route");
+      setError(caught instanceof Error ? caught.message : "No se pudieron comparar las rutas");
     } finally {
       setIsLoading(false);
     }
@@ -210,51 +292,961 @@ function RouteEstimatePage() {
 
   return (
     <div className="page-stack">
-      <header className="page-header">
-        <div>
-          <h1>Route estimate</h1>
-          <p>Posts to NestJS, which delegates to the Python route service.</p>
-        </div>
-      </header>
+      <PageHeader title="Planificador de rutas" text="Elige una preferencia y compara emisiones, tiempo y costo." />
 
-      <form className="route-form" onSubmit={submitEstimate}>
+      <form className="route-form" onSubmit={submit}>
         <label>
-          Origin
-          <input
-            onChange={(event) => setForm({ ...form, origin: event.target.value })}
-            type="text"
-            value={form.origin}
-          />
+          Origen
+          <input onChange={(event) => setOrigin(event.target.value)} value={origin} />
         </label>
         <label>
-          Destination
-          <input
-            onChange={(event) => setForm({ ...form, destination: event.target.value })}
-            type="text"
-            value={form.destination}
-          />
+          Destino
+          <input onChange={(event) => setDestination(event.target.value)} value={destination} />
+        </label>
+        <label>
+          Preferencia
+          <select onChange={(event) => setPreference(event.target.value as RoutePreference)} value={preference}>
+            <option value="balanced">Equilibrada</option>
+            <option value="fastest">Mas rapida</option>
+            <option value="cheapest">Mas barata</option>
+            <option value="greenest">Mas ecologica</option>
+          </select>
         </label>
         <button className="primary-button" disabled={isLoading} type="submit">
           <MapPinned size={18} />
-          {isLoading ? "Estimating..." : "Estimate"}
+          {isLoading ? "Comparando..." : "Comparar rutas"}
         </button>
       </form>
 
       {error && <p className="error-text">{error}</p>}
 
-      {estimate && (
-        <section className="status-panel">
-          <div>
-            <h2>{distance}</h2>
-            <p>
-              {Math.round(estimate.durationSeconds / 60)} min · {estimate.estimatedCo2SavingsGrams} g CO2 saved ·{" "}
-              {estimate.provider}
-            </p>
-          </div>
-        </section>
+      {comparison && (
+        <div className="route-options">
+          {comparison.options.map((option) => (
+            <article className={option.id === comparison.recommendedOptionId ? "option-card recommended" : "option-card"} key={option.id}>
+              <div>
+                <span className="status-pill">{translateTransportMode(option.mode)}</span>
+                <h2>{translateRouteLabel(option.label, option.mode)}</h2>
+                <p>{translateRouteExplanation(option.explanation)}</p>
+              </div>
+              <div className="option-metrics">
+                <span>{Math.round(option.durationSeconds / 60)} min</span>
+                <span>${(option.costCents / 100).toFixed(2)}</span>
+                <span>{option.carbonGrams} g CO2</span>
+                {option.mode === "cycling" && option.distanceMeters > 10_000 && (
+                  <button className="secondary-button compact" onClick={onFindCarpool} type="button">
+                    Buscar viaje compartido
+                  </button>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
       )}
     </div>
   );
 }
+
+function Carpools({ token }: { token: string }) {
+  const [offers, setOffers] = useState<RideOffer[]>([]);
+  const [requests, setRequests] = useState<RideRequest[]>([]);
+  const [dailyRoutes, setDailyRoutes] = useState<DailyRoute[]>([]);
+  const [subscriptions, setSubscriptions] = useState<DailyRouteSubscription[]>([]);
+  const [matches, setMatches] = useState<CarpoolMatch[]>([]);
+  const [form, setForm] = useState<CreateRideOfferRequest & CreateRideRequestRequest>({
+    origin: "Centro",
+    destination: "Campus Norte",
+    departureTime: toInputDateTime(new Date(Date.now() + 60 * 60 * 1000)),
+    arrivalTime: toInputDateTime(new Date(Date.now() + 100 * 60 * 1000)),
+    seatsAvailable: 3,
+    maxPassengers: 3,
+    pricePerSeatCents: 0,
+    seatsNeeded: 1,
+    preference: "balanced",
+    fuelEfficiencyKmPerLiter: 12,
+    averageGasPriceCentsPerLiter: 2400,
+  });
+  const [dailyRouteForm, setDailyRouteForm] = useState<CreateDailyRouteRequest>({
+    label: "Ruta al trabajo",
+    origin: "Centro",
+    destination: "Campus Norte",
+    daysOfWeek: [1, 2, 3, 4, 5],
+    departureTime: "08:00",
+    arrivalTime: "09:00",
+    maxPassengers: 3,
+    fuelEfficiencyKmPerLiter: 12,
+    averageGasPriceCentsPerLiter: 2400,
+  });
+  const [subscriptionForm, setSubscriptionForm] = useState<CreateDailyRouteSubscriptionRequest>({
+    pickupAddress: "Centro",
+    dropoffAddress: "Campus Norte",
+  });
+
+  const refresh = () => {
+    void apiRequest<RideOffer[]>("/rides/offers", token).then(setOffers).catch(() => setOffers([]));
+    void apiRequest<RideRequest[]>("/rides/requests", token).then(setRequests).catch(() => setRequests([]));
+    void apiRequest<DailyRoute[]>("/daily-routes", token).then(setDailyRoutes).catch(() => setDailyRoutes([]));
+  };
+
+  useEffect(refresh, [token]);
+
+  async function createOffer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await apiRequest<RideOffer>("/rides/offers", token, {
+      method: "POST",
+      body: JSON.stringify({
+        origin: form.origin,
+        destination: form.destination,
+        departureTime: new Date(form.departureTime).toISOString(),
+        arrivalTime: new Date(form.arrivalTime).toISOString(),
+        seatsAvailable: Number(form.seatsAvailable),
+        maxPassengers: Number(form.maxPassengers),
+        pricePerSeatCents: Number(form.pricePerSeatCents),
+        fuelEfficiencyKmPerLiter: Number(form.fuelEfficiencyKmPerLiter),
+        averageGasPriceCentsPerLiter: Number(form.averageGasPriceCentsPerLiter),
+      }),
+    });
+    refresh();
+  }
+
+  async function createRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const request = await apiRequest<RideRequest>("/rides/requests", token, {
+      method: "POST",
+      body: JSON.stringify({
+        origin: form.origin,
+        destination: form.destination,
+        departureTime: new Date(form.departureTime).toISOString(),
+        arrivalTime: form.arrivalTime ? new Date(form.arrivalTime).toISOString() : undefined,
+        seatsNeeded: Number(form.seatsNeeded),
+        preference: form.preference,
+        bikeFallbackRequested: Boolean(form.bikeFallbackRequested),
+      }),
+    });
+    setRequests((current) => [request, ...current]);
+  }
+
+  async function suggestMatches() {
+    setMatches(
+      await apiRequest<CarpoolMatch[]>("/carpools/match", token, {
+        method: "POST",
+        body: JSON.stringify({ requestId: requests[0]?.id }),
+      }),
+    );
+  }
+
+  async function createDailyRoute(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const route = await apiRequest<DailyRoute>("/daily-routes", token, {
+      method: "POST",
+      body: JSON.stringify({
+        ...dailyRouteForm,
+        maxPassengers: Number(dailyRouteForm.maxPassengers),
+        fuelEfficiencyKmPerLiter: Number(dailyRouteForm.fuelEfficiencyKmPerLiter),
+        averageGasPriceCentsPerLiter: Number(dailyRouteForm.averageGasPriceCentsPerLiter),
+      }),
+    });
+    setDailyRoutes((current) => [route, ...current]);
+  }
+
+  async function subscribeToRoute(routeId: string) {
+    const subscription = await apiRequest<DailyRouteSubscription>(`/daily-routes/${routeId}/subscribe`, token, {
+      method: "POST",
+      body: JSON.stringify(subscriptionForm),
+    });
+    setSubscriptions((current) => [subscription, ...current]);
+  }
+
+  return (
+    <div className="page-stack">
+      <PageHeader title="Tablero de viajes compartidos" text="Ofrece un viaje, solicita asiento y encuentra rutas compatibles." />
+
+      <div className="two-column">
+        <form className="route-form" onSubmit={createOffer}>
+          <PanelTitle icon={<CarFront size={20} />} title="Ofrecer un viaje" />
+          <SharedRideFields form={form} setForm={setForm} />
+          <label>
+            Asientos disponibles
+            <input
+              min={1}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  seatsAvailable: Number(event.target.value),
+                  maxPassengers: Number(event.target.value),
+                })
+              }
+              type="number"
+              value={form.seatsAvailable}
+            />
+          </label>
+          <label>
+            Rendimiento de combustible
+            <input
+              min={1}
+              onChange={(event) => setForm({ ...form, fuelEfficiencyKmPerLiter: Number(event.target.value) })}
+              type="number"
+              value={form.fuelEfficiencyKmPerLiter}
+            />
+          </label>
+          <label>
+            Precio de gasolina en centavos/litro
+            <input
+              min={0}
+              onChange={(event) => setForm({ ...form, averageGasPriceCentsPerLiter: Number(event.target.value) })}
+              type="number"
+              value={form.averageGasPriceCentsPerLiter}
+            />
+          </label>
+          <button className="primary-button" type="submit">
+            <Plus size={18} />
+            Publicar oferta
+          </button>
+        </form>
+
+        <form className="route-form" onSubmit={createRequest}>
+          <PanelTitle icon={<UsersRound size={20} />} title="Solicitar un viaje" />
+          <SharedRideFields form={form} setForm={setForm} />
+          <label className="checkbox-row">
+            <input
+              checked={Boolean(form.bikeFallbackRequested)}
+              onChange={(event) => setForm({ ...form, bikeFallbackRequested: event.target.checked })}
+              type="checkbox"
+            />
+            Buscar viaje compartido si la ruta en bici es demasiado larga
+          </label>
+          <label>
+            Asientos necesarios
+            <input
+              min={1}
+              onChange={(event) => setForm({ ...form, seatsNeeded: Number(event.target.value) })}
+              type="number"
+              value={form.seatsNeeded}
+            />
+          </label>
+          <button className="primary-button" type="submit">
+            <Plus size={18} />
+            Solicitar viaje compartido
+          </button>
+        </form>
+      </div>
+
+      <section className="data-panel">
+        <PanelTitle icon={<CalendarDays size={20} />} title="Rutas diarias" />
+        <form className="route-form nested-form" onSubmit={createDailyRoute}>
+          <label>
+            Nombre de la ruta
+            <input onChange={(event) => setDailyRouteForm({ ...dailyRouteForm, label: event.target.value })} value={dailyRouteForm.label} />
+          </label>
+          <div className="two-column dense">
+            <label>
+              Origen
+              <input onChange={(event) => setDailyRouteForm({ ...dailyRouteForm, origin: event.target.value })} value={dailyRouteForm.origin} />
+            </label>
+            <label>
+              Destino
+              <input
+                onChange={(event) => setDailyRouteForm({ ...dailyRouteForm, destination: event.target.value })}
+                value={dailyRouteForm.destination}
+              />
+            </label>
+          </div>
+          <div className="day-picker" aria-label="Dias de la semana">
+            {dayLabels.map((day) => (
+              <label className={dailyRouteForm.daysOfWeek.includes(day.value) ? "day-chip active" : "day-chip"} key={day.value}>
+                <input
+                  checked={dailyRouteForm.daysOfWeek.includes(day.value)}
+                  onChange={(event) => {
+                    const days = event.target.checked
+                      ? [...dailyRouteForm.daysOfWeek, day.value]
+                      : dailyRouteForm.daysOfWeek.filter((value) => value !== day.value);
+                    setDailyRouteForm({ ...dailyRouteForm, daysOfWeek: days.sort() });
+                  }}
+                  type="checkbox"
+                />
+                {day.label}
+              </label>
+            ))}
+          </div>
+          <div className="two-column dense">
+            <label>
+              Salida
+              <input
+                onChange={(event) => setDailyRouteForm({ ...dailyRouteForm, departureTime: event.target.value })}
+                type="time"
+                value={dailyRouteForm.departureTime}
+              />
+            </label>
+            <label>
+              Llegada
+              <input
+                onChange={(event) => setDailyRouteForm({ ...dailyRouteForm, arrivalTime: event.target.value })}
+                type="time"
+                value={dailyRouteForm.arrivalTime}
+              />
+            </label>
+          </div>
+          <label>
+            Maximo de pasajeros
+            <input
+              min={1}
+              onChange={(event) => setDailyRouteForm({ ...dailyRouteForm, maxPassengers: Number(event.target.value) })}
+              type="number"
+              value={dailyRouteForm.maxPassengers}
+            />
+          </label>
+          <button className="primary-button" type="submit">
+            <Plus size={18} />
+            Guardar ruta diaria
+          </button>
+        </form>
+
+        <div className="route-form nested-form">
+          <PanelTitle icon={<UsersRound size={18} />} title="Suscribirse a una ruta cercana" />
+          <div className="two-column dense">
+            <label>
+              Punto de recogida
+              <input
+                onChange={(event) => setSubscriptionForm({ ...subscriptionForm, pickupAddress: event.target.value })}
+                value={subscriptionForm.pickupAddress}
+              />
+            </label>
+            <label>
+              Punto de destino
+              <input
+                onChange={(event) => setSubscriptionForm({ ...subscriptionForm, dropoffAddress: event.target.value })}
+                value={subscriptionForm.dropoffAddress}
+              />
+            </label>
+          </div>
+        </div>
+
+        <DailyRouteList routes={dailyRoutes} subscriptions={subscriptions} onSubscribe={subscribeToRoute} />
+      </section>
+
+      <section className="data-panel">
+        <div className="panel-toolbar">
+          <PanelTitle icon={<UsersRound size={20} />} title="Coincidencias sugeridas" />
+          <button className="secondary-button" onClick={suggestMatches} type="button">
+            Buscar coincidencias
+          </button>
+        </div>
+        <div className="ride-list">
+          {matches.map((match) => (
+            <article className="ride-row" key={`${match.offerId}-${match.requestId}`}>
+              <div>
+                <h2>{match.score}% compatible</h2>
+                <p>{translateMatchReason(match.reason)}</p>
+              </div>
+              <div className="ride-meta">
+                <span>${(match.estimatedSavingsCents / 100).toFixed(2)} ahorrados</span>
+                <span>{match.estimatedCo2SavingsGrams} g CO2</span>
+                <span>{match.pickupOffsetMeters} m a la recogida</span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <div className="two-column">
+        <RideList title="Ofertas abiertas" rides={offers} />
+        <RideRequestList title="Tus solicitudes" requests={requests} />
+      </div>
+    </div>
+  );
+}
+
+function SharedRideFields({
+  form,
+  setForm,
+}: {
+  form: CreateRideOfferRequest & CreateRideRequestRequest;
+  setForm: (form: CreateRideOfferRequest & CreateRideRequestRequest) => void;
+}) {
+  return (
+    <>
+      <label>
+        Origen
+        <input onChange={(event) => setForm({ ...form, origin: event.target.value })} value={form.origin} />
+      </label>
+      <label>
+        Destino
+        <input onChange={(event) => setForm({ ...form, destination: event.target.value })} value={form.destination} />
+      </label>
+      <label>
+        Salida
+        <input
+          onChange={(event) => setForm({ ...form, departureTime: event.target.value })}
+          type="datetime-local"
+          value={form.departureTime}
+        />
+      </label>
+      <label>
+        Llegada
+        <input
+          onChange={(event) => setForm({ ...form, arrivalTime: event.target.value })}
+          type="datetime-local"
+          value={form.arrivalTime}
+        />
+      </label>
+    </>
+  );
+}
+
+function DailyRouteList({
+  routes,
+  subscriptions,
+  onSubscribe,
+}: {
+  routes: DailyRoute[];
+  subscriptions: DailyRouteSubscription[];
+  onSubscribe: (routeId: string) => void;
+}) {
+  return (
+    <div className="ride-list">
+      {routes.map((route) => (
+        <article className="ride-row" key={route.id}>
+          <div>
+            <h2>
+              {route.label}: {route.origin} a {route.destination}
+            </h2>
+            <p>
+              {formatDays(route.daysOfWeek)} · {route.departureTime.slice(0, 5)} a {route.arrivalTime.slice(0, 5)}
+            </p>
+          </div>
+          <div className="ride-meta">
+            <span>{route.maxPassengers} asientos</span>
+            <span>${(route.costPerPersonCents / 100).toFixed(2)} c/u</span>
+            <span>{Math.round(route.co2SavingsGrams / 1000)} kg CO2 ahorrados</span>
+            <button className="secondary-button compact" onClick={() => onSubscribe(route.id)} type="button">
+              Suscribirse
+            </button>
+          </div>
+        </article>
+      ))}
+      {!routes.length && <p className="muted-text">Las rutas compartidas diarias apareceran cuando los conductores las publiquen.</p>}
+      {subscriptions.map((subscription) => (
+        <article className="ride-row pending-row" key={subscription.id}>
+          <div>
+            <h2>Suscripcion pendiente de confirmacion del conductor</h2>
+            <p>
+              {subscription.pickupAddress} a {subscription.dropoffAddress}
+            </p>
+          </div>
+          <div className="ride-meta">
+            <span>${(subscription.estimatedCostShareCents / 100).toFixed(2)}</span>
+            <span>{subscription.estimatedCo2SavingsGrams} g CO2</span>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function HistoryPage({ token }: { token: string }) {
+  const [trips, setTrips] = useState<Trip[]>([]);
+  const [stats, setStats] = useState<SavingsStats | null>(null);
+
+  useEffect(() => {
+    void apiRequest<Trip[]>("/trips/history", token).then(setTrips).catch(() => setTrips([]));
+    void apiRequest<SavingsStats>("/stats/savings", token).then(setStats).catch(() => setStats(emptyStats));
+  }, [token]);
+
+  return (
+    <div className="page-stack">
+      <PageHeader title="Historial de viajes" text="Revisa viajes completados y ahorros de sostenibilidad." />
+      <div className="summary-grid">
+        <MetricCard icon={<History />} label="Viajes" value={stats?.tripsCompleted ?? 0} />
+        <MetricCard icon={<Leaf />} label="CO2 ahorrado" value={`${stats?.totalCo2SavingsGrams ?? 0} g`} />
+        <MetricCard icon={<Medal />} label="Dinero ahorrado" value={`$${((stats?.totalMoneySavingsCents ?? 0) / 100).toFixed(2)}`} />
+      </div>
+      <section className="data-panel">
+        <div className="ride-list">
+          {trips.map((trip) => (
+            <article className="ride-row" key={trip.id}>
+              <div>
+                <h2>
+                  {trip.origin} a {trip.destination}
+                </h2>
+                <p>{translateTransportMode(trip.mode)} · {new Date(trip.completedAt).toLocaleString("es-MX")}</p>
+              </div>
+              <div className="ride-meta">
+                <span>{Math.round(trip.distanceMeters / 1000)} km</span>
+                <span>{trip.co2SavingsGrams} g CO2</span>
+              </div>
+            </article>
+          ))}
+          {!trips.length && <p className="muted-text">El historial aparecera despues de completar viajes.</p>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ProfilePage({ token, email }: { token: string; email: string }) {
+  const [profile, setProfile] = useState<UpsertProfileRequest>({
+    fullName: "",
+    username: "",
+    phone: "",
+    hasVehicle: false,
+    hasBike: false,
+    defaultPreference: "balanced",
+  });
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [vehicleForm, setVehicleForm] = useState<UpsertVehicleRequest>({
+    label: "Mi auto",
+    seats: 4,
+    fuelType: "gasoline",
+    fuelEfficiencyKmPerLiter: 12,
+    averageGasPriceCentsPerLiter: 2400,
+  });
+  const [message, setMessage] = useState("");
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [isPasswordSubmitting, setIsPasswordSubmitting] = useState(false);
+
+  useEffect(() => {
+    apiRequest<Profile>("/profile", token)
+      .then((data) =>
+        setProfile({
+          fullName: data.fullName ?? "",
+          username: data.username ?? "",
+          phone: data.phone ?? "",
+          hasVehicle: data.hasVehicle,
+          hasBike: data.hasBike,
+          defaultPreference: data.defaultPreference,
+        }),
+      )
+      .catch(() => setMessage("Crea tu perfil para personalizar recomendaciones."));
+    void apiRequest<Vehicle[]>("/vehicles", token).then(setVehicles).catch(() => setVehicles([]));
+  }, [token]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await apiRequest<Profile>("/profile", token, {
+      method: "PUT",
+      body: JSON.stringify(profile),
+    });
+    setMessage("Perfil guardado.");
+  }
+
+  async function createVehicle(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const vehicle = await apiRequest<Vehicle>("/vehicles", token, {
+      method: "POST",
+      body: JSON.stringify(vehicleForm),
+    });
+    setVehicles((current) => [vehicle, ...current]);
+    setMessage("Vehiculo guardado.");
+  }
+
+  async function changePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsPasswordSubmitting(true);
+    setPasswordMessage("");
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordMessage("Las contrasenas nuevas no coinciden.");
+      setIsPasswordSubmitting(false);
+      return;
+    }
+
+    const signInResult = await supabase.auth.signInWithPassword({
+      email,
+      password: passwordForm.currentPassword,
+    });
+
+    if (signInResult.error) {
+      setPasswordMessage("La contrasena actual es incorrecta.");
+      setIsPasswordSubmitting(false);
+      return;
+    }
+
+    const { error } = await supabase.auth.updateUser({ password: passwordForm.newPassword });
+
+    if (error) {
+      setPasswordMessage(error.message);
+    } else {
+      setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      setPasswordMessage("Contrasena actualizada.");
+    }
+
+    setIsPasswordSubmitting(false);
+  }
+
+  return (
+    <div className="page-stack">
+      <PageHeader title="Perfil" text={email} />
+      <div className="two-column">
+        <form className="route-form" onSubmit={submit}>
+          <label>
+            Nombre completo
+            <input onChange={(event) => setProfile({ ...profile, fullName: event.target.value })} value={profile.fullName} />
+          </label>
+          <label>
+            Nombre de usuario
+            <input onChange={(event) => setProfile({ ...profile, username: event.target.value })} value={profile.username} />
+          </label>
+          <label>
+            Telefono
+            <input onChange={(event) => setProfile({ ...profile, phone: event.target.value })} value={profile.phone} />
+          </label>
+          <label>
+            Preferencia de ruta predeterminada
+            <select
+              onChange={(event) => setProfile({ ...profile, defaultPreference: event.target.value as RoutePreference })}
+              value={profile.defaultPreference}
+            >
+              <option value="balanced">Equilibrada</option>
+              <option value="fastest">Mas rapida</option>
+              <option value="cheapest">Mas barata</option>
+              <option value="greenest">Mas ecologica</option>
+            </select>
+          </label>
+          <label className="checkbox-row">
+            <input
+              checked={Boolean(profile.hasVehicle)}
+              onChange={(event) => setProfile({ ...profile, hasVehicle: event.target.checked })}
+              type="checkbox"
+            />
+            Tengo vehiculo
+          </label>
+          <label className="checkbox-row">
+            <input
+              checked={Boolean(profile.hasBike)}
+              onChange={(event) => setProfile({ ...profile, hasBike: event.target.checked })}
+              type="checkbox"
+            />
+            Uso bicicleta
+          </label>
+          <button className="primary-button" type="submit">Guardar perfil</button>
+        </form>
+
+        <div className="page-stack compact-stack">
+          <section className="data-panel">
+            <PanelTitle icon={<LockKeyhole size={20} />} title="Cuenta" />
+            <form className="route-form nested-form" onSubmit={changePassword}>
+              <label>
+                Contrasena actual
+                <input
+                  autoComplete="current-password"
+                  onChange={(event) => setPasswordForm({ ...passwordForm, currentPassword: event.target.value })}
+                  required
+                  type="password"
+                  value={passwordForm.currentPassword}
+                />
+              </label>
+              <label>
+                Nueva contrasena
+                <input
+                  autoComplete="new-password"
+                  minLength={6}
+                  onChange={(event) => setPasswordForm({ ...passwordForm, newPassword: event.target.value })}
+                  required
+                  type="password"
+                  value={passwordForm.newPassword}
+                />
+              </label>
+              <label>
+                Confirmar nueva contrasena
+                <input
+                  autoComplete="new-password"
+                  minLength={6}
+                  onChange={(event) => setPasswordForm({ ...passwordForm, confirmPassword: event.target.value })}
+                  required
+                  type="password"
+                  value={passwordForm.confirmPassword}
+                />
+              </label>
+              <button className="primary-button" disabled={isPasswordSubmitting} type="submit">
+                {isPasswordSubmitting ? "Actualizando..." : "Cambiar contrasena"}
+              </button>
+            </form>
+            {passwordMessage && <p className="muted-text form-message">{passwordMessage}</p>}
+          </section>
+
+          <section className="data-panel">
+            <PanelTitle icon={<ShieldCheck size={20} />} title="Verificacion" />
+            <div className="notice-panel disabled">
+              <strong>La verificacion por selfie aun no esta activa.</strong>
+              <p>Las revisiones de conductor y pasajero verificados quedan para la siguiente etapa de requisitos.</p>
+            </div>
+            {profile.hasBike && (
+              <div className="notice-panel">
+                <PanelTitle icon={<Bike size={18} />} title="Modo bicicleta" />
+                <p>La comparacion de rutas en bici sigue disponible. Las distancias largas ofreceran busqueda de viaje compartido.</p>
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+
+      {profile.hasVehicle && (
+        <section className="data-panel">
+          <PanelTitle icon={<CarFront size={20} />} title="Detalles del vehiculo" />
+          <form className="route-form nested-form" onSubmit={createVehicle}>
+            <div className="two-column dense">
+              <label>
+                Nombre del vehiculo
+                <input onChange={(event) => setVehicleForm({ ...vehicleForm, label: event.target.value })} value={vehicleForm.label} />
+              </label>
+              <label>
+                Asientos
+                <input
+                  min={1}
+                  onChange={(event) => setVehicleForm({ ...vehicleForm, seats: Number(event.target.value) })}
+                  type="number"
+                  value={vehicleForm.seats}
+                />
+              </label>
+            </div>
+            <div className="two-column dense">
+              <label>
+                Tipo de combustible
+                <select
+                  onChange={(event) => setVehicleForm({ ...vehicleForm, fuelType: event.target.value as Vehicle["fuelType"] })}
+                  value={vehicleForm.fuelType}
+                >
+                  <option value="gasoline">Gasolina</option>
+                  <option value="hybrid">Hibrido</option>
+                  <option value="electric">Electrico</option>
+                </select>
+              </label>
+              <label>
+                Km por litro
+                <input
+                  min={1}
+                  onChange={(event) => setVehicleForm({ ...vehicleForm, fuelEfficiencyKmPerLiter: Number(event.target.value) })}
+                  type="number"
+                  value={vehicleForm.fuelEfficiencyKmPerLiter}
+                />
+              </label>
+            </div>
+            <label>
+              Precio de gasolina en centavos/litro
+              <input
+                min={0}
+                onChange={(event) => setVehicleForm({ ...vehicleForm, averageGasPriceCentsPerLiter: Number(event.target.value) })}
+                type="number"
+                value={vehicleForm.averageGasPriceCentsPerLiter}
+              />
+            </label>
+            <button className="primary-button" type="submit">Guardar vehiculo</button>
+          </form>
+          <div className="ride-list">
+            {vehicles.map((vehicle) => (
+              <article className="ride-row" key={vehicle.id}>
+                <div>
+                  <h2>{vehicle.label}</h2>
+                  <p>
+                    {translateFuelType(vehicle.fuelType)} · {vehicle.seats} asientos
+                  </p>
+                </div>
+                <div className="ride-meta">
+                  <span>{vehicle.fuelEfficiencyKmPerLiter} km/L</span>
+                  <span>${(vehicle.averageGasPriceCentsPerLiter / 100).toFixed(2)}/L</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+      {message && <p className="muted-text">{message}</p>}
+    </div>
+  );
+}
+
+function RideList({ title, rides }: { title: string; rides: RideOffer[] }) {
+  return (
+    <section className="data-panel">
+      <PanelTitle icon={<CarFront size={20} />} title={title} />
+      <div className="ride-list">
+        {rides.map((ride) => (
+          <article className="ride-row" key={ride.id}>
+            <div>
+              <h2>
+                {ride.origin} a {ride.destination}
+              </h2>
+              <p>{new Date(ride.departureTime).toLocaleString("es-MX")}</p>
+            </div>
+            <div className="ride-meta">
+              <span>{ride.seatsAvailable} asientos</span>
+              <span>${(ride.costPerPersonCents / 100).toFixed(2)} dividido</span>
+              <span>{Math.round(ride.co2SavingsGrams / 1000)} kg CO2</span>
+            </div>
+          </article>
+        ))}
+        {!rides.length && <p className="muted-text">Aun no hay ofertas.</p>}
+      </div>
+    </section>
+  );
+}
+
+function RideRequestList({ title, requests }: { title: string; requests: RideRequest[] }) {
+  return (
+    <section className="data-panel">
+      <PanelTitle icon={<UsersRound size={20} />} title={title} />
+      <div className="ride-list">
+        {requests.map((request) => (
+          <article className="ride-row" key={request.id}>
+            <div>
+              <h2>
+                {request.origin} a {request.destination}
+              </h2>
+              <p>{new Date(request.departureTime).toLocaleString("es-MX")}</p>
+            </div>
+            <div className="ride-meta">
+              <span>{request.seatsNeeded} asientos</span>
+              <span>{translatePreference(request.preference)}</span>
+            </div>
+          </article>
+        ))}
+        {!requests.length && <p className="muted-text">Aun no hay solicitudes.</p>}
+      </div>
+    </section>
+  );
+}
+
+function PageHeader({ title, text }: { title: string; text: string }) {
+  return (
+    <header className="page-header">
+      <div>
+        <h1>{title}</h1>
+        <p>{text}</p>
+      </div>
+    </header>
+  );
+}
+
+function MetricCard({ icon, label, value }: { icon: ReactNode; label: string; value: string | number }) {
+  return (
+    <article className="summary-card">
+      <span className="summary-icon">{icon}</span>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
+  );
+}
+
+function PanelTitle({ icon, title }: { icon: ReactNode; title: string }) {
+  return (
+    <div className="panel-title">
+      {icon}
+      <h2>{title}</h2>
+    </div>
+  );
+}
+
+function toInputDateTime(date: Date): string {
+  return date.toISOString().slice(0, 16);
+}
+
+function formatDays(days: number[]): string {
+  return days
+    .map((value) => dayLabels.find((day) => day.value === value)?.label ?? "")
+    .filter(Boolean)
+    .join(", ");
+}
+
+function translateStatus(status: string): string {
+  return status === "ok" ? "activo" : "degradado";
+}
+
+function translatePreference(preference: RoutePreference): string {
+  const labels: Record<RoutePreference, string> = {
+    balanced: "Equilibrada",
+    fastest: "Mas rapida",
+    cheapest: "Mas barata",
+    greenest: "Mas ecologica",
+  };
+  return labels[preference];
+}
+
+function translateTransportMode(mode: TransportMode): string {
+  const labels: Record<TransportMode, string> = {
+    driving: "Auto",
+    transit: "Transporte publico",
+    walking: "Caminata",
+    cycling: "Bicicleta",
+    carpool: "Viaje compartido",
+  };
+  return labels[mode];
+}
+
+function translateFuelType(fuelType: Vehicle["fuelType"]): string {
+  const labels: Record<Vehicle["fuelType"], string> = {
+    gasoline: "Gasolina",
+    hybrid: "Hibrido",
+    electric: "Electrico",
+  };
+  return labels[fuelType];
+}
+
+function translateRouteLabel(label: string, mode: TransportMode): string {
+  const translated = translateTransportMode(mode);
+  return label === mode.replace("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) ? translated : label;
+}
+
+function translateRouteExplanation(explanation: string): string {
+  const labels: Record<string, string> = {
+    "Bike route is long for this trip; compare it with carpool options before committing.":
+      "La ruta en bici es larga para este viaje; comparala con opciones compartidas antes de decidir.",
+    "Carpool reduces gas cost per person and CO2 when compatible riders join.":
+      "El viaje compartido reduce el costo de gasolina por persona y el CO2 cuando se suman pasajeros compatibles.",
+  };
+  if (labels[explanation]) {
+    return labels[explanation];
+  }
+
+  const mode = explanation.split(" ")[0]?.toLowerCase();
+  if (mode && ["driving", "transit", "walking", "cycling", "carpool"].includes(mode)) {
+    return `${translateTransportMode(mode as TransportMode)} equilibra tiempo, costo y emisiones para esta ruta.`;
+  }
+
+  return explanation;
+}
+
+function translateMatchReason(reason: string): string {
+  const labels: Record<string, string> = {
+    "Close pickup and destination; reroute after driver confirmation.":
+      "Recogida y destino cercanos; la ruta se ajustara despues de que confirme el conductor.",
+    "Close pickup and destination; driver confirmation is required before rerouting.":
+      "Recogida y destino cercanos; se requiere confirmacion del conductor antes de ajustar la ruta.",
+  };
+  return labels[reason] ?? reason;
+}
+
+const dayLabels = [
+  { label: "Dom", value: 0 },
+  { label: "Lun", value: 1 },
+  { label: "Mar", value: 2 },
+  { label: "Mie", value: 3 },
+  { label: "Jue", value: 4 },
+  { label: "Vie", value: 5 },
+  { label: "Sab", value: 6 },
+];
+
+const emptyStats: SavingsStats = {
+  tripsCompleted: 0,
+  totalDistanceMeters: 0,
+  totalCo2SavingsGrams: 0,
+  totalMoneySavingsCents: 0,
+  carpoolTrips: 0,
+};
+
+const seedRewards: Reward[] = [
+  {
+    id: "seed-reward-1",
+    userId: "seed",
+    label: "Primera ruta limpia",
+    points: 50,
+    reason: "Compara tu primera ruta sostenible.",
+    earnedAt: new Date().toISOString(),
+  },
+];
 
 export default App;
